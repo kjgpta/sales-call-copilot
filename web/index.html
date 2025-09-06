@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sales Call Copilot</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="max-w-6xl mx-auto px-4 py-8">
+    <header class="mb-8">
+      <h1 class="text-3xl font-bold">Sales Call Copilot</h1>
+      <p class="text-sm text-gray-600">Ask questions over your sales-call transcripts with grounded, cited answers.</p>
+    </header>
+
+    <section class="mb-6 p-4 bg-white shadow rounded-2xl">
+      <h2 class="text-xl font-semibold mb-2">Upload transcripts</h2>
+      <div id="drop" class="flex items-center justify-center border-2 border-dashed rounded-2xl py-8 text-gray-500">
+        <div class="text-center">
+          <div class="mb-2 font-medium">Drag & drop transcripts (.txt) here</div>
+          <div class="text-xs">or</div>
+          <label class="mt-2 inline-block px-4 py-2 bg-gray-200 rounded-xl cursor-pointer hover:bg-gray-300">
+            Choose files
+            <input id="fileInput" type="file" multiple accept=".txt" class="hidden"/>
+          </label>
+        </div>
+      </div>
+      <div id="uploadStatus" class="mt-2 text-xs text-gray-600"></div>
+    </section>
+
+    <section class="mb-6 p-4 bg-white shadow rounded-2xl">
+      <div class="flex flex-wrap items-center gap-3">
+        <button id="btnIngest" class="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700">Ingest Sample Data</button>
+        <button id="btnListCalls" class="px-4 py-2 rounded-xl bg-gray-200 hover:bg-gray-300">List Files</button>
+        <div id="status" class="text-sm text-gray-500"></div>
+      </div>
+      <div id="calls" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+    </section>
+
+    <section class="mb-6 p-4 bg-white shadow rounded-2xl">
+      <h2 class="text-xl font-semibold mb-2">Ask a question</h2>
+      <div class="grid md:grid-cols-6 gap-3">
+        <input id="query" class="md:col-span-6 border rounded-xl px-3 py-2" placeholder="e.g., What discounts were discussed?"/>
+        <input id="incTopics" class="md:col-span-3 border rounded-xl px-3 py-2" placeholder="Include topics (comma) e.g., pricing,discount"/>
+        <input id="excTopics" class="md:col-span-3 border rounded-xl px-3 py-2" placeholder="Exclude topics (comma) e.g., competitor"/>
+        <label class="md:col-span-3 flex items-center gap-2 text-sm">
+          <span>Min sentiment</span>
+          <input id="minSent" type="number" min="-1" max="1" step="0.1" value="-1" class="border rounded px-2 py-1 w-24"/>
+        </label>
+        <label class="md:col-span-3 flex items-center gap-2 text-sm">
+          <span>Max sentiment</span>
+          <input id="maxSent" type="number" min="-1" max="1" step="0.1" value="1" class="border rounded px-2 py-1 w-24"/>
+        </label>
+        <button id="btnAsk" class="md:col-span-6 px-4 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700">Ask</button>
+      </div>
+    
+    <section class="mb-6 p-4 bg-white shadow rounded-2xl" id="viewerSec">
+      <h2 class="text-xl font-semibold mb-2">Transcript Viewer</h2>
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        <input id="viewerCallId" class="border rounded-xl px-3 py-2" placeholder="call_id e.g., 2_pricing_call"/>
+        <input id="viewerStart" class="border rounded-xl px-3 py-2 w-28" placeholder="start mm:ss"/>
+        <input id="viewerEnd" class="border rounded-xl px-3 py-2 w-28" placeholder="end mm:ss"/>
+        <button id="btnOpenViewer" class="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700">Open</button>
+      </div>
+      <div id="transcript" class="max-h-96 overflow-auto border rounded-xl p-3 bg-gray-50 text-sm"></div>
+    </section>
+    </section>
+
+    <section id="answerWrap" class="hidden mb-6 p-4 bg-white shadow rounded-2xl">
+      <h3 class="text-lg font-semibold mb-2">Answer</h3>
+      <pre id="answer" class="whitespace-pre-wrap text-sm"></pre>
+      <h4 class="text-md font-semibold mt-4 mb-2">Sources</h4>
+      <div id="sources" class="grid gap-3 md:grid-cols-2"></div>
+    </section>
+
+    <footer class="text-xs text-gray-500 mt-8">
+      <p>Run the API: <code>uvicorn server.app:app --reload</code></p>
+    </footer>
+  </div>
+  
+  <!-- Add overlay element for analyzing request -->
+  <div id="overlay" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center backdrop-blur-sm z-50">
+    <span class="text-white text-xl font-bold">Analyzing Request...</span>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const callsDiv = $("calls");
+    const statusEl = $("status");
+    const answerWrap = $("answerWrap");
+    const answerEl = $("answer");
+    const sourcesEl = $("sources");
+
+    async function ingest() {
+      statusEl.textContent = "Ingesting...";
+      const r = await fetch("/api/ingest-sample", { method: "POST" });
+      const j = await r.json();
+      statusEl.textContent = j.ok ? `Ingested ${j.segments} segments` : (j.message || "Failed");
+      await listCalls();
+    }
+
+    async function listCalls() {
+      const r = await fetch("/api/calls");
+      const j = await r.json();
+      callsDiv.innerHTML = "";
+      j.forEach(c => {
+        const el = document.createElement("div");
+        el.className = "p-3 border rounded-xl";
+        el.innerHTML = `<div class="text-sm font-medium">${c.call_id}</div><div class="text-xs text-gray-500">${c.filename}</div>`;
+        callsDiv.appendChild(el);
+      });
+    }
+
+    function parseSources(text) {
+      // crude parser: lines after "Sources:"
+      const out = [];
+      const idx = text.indexOf("Sources:");
+      if (idx === -1) return out;
+      const lines = text.slice(idx).split("\n").slice(1);
+      for (const line of lines) {
+        const m = line.match(/([\\w\\-]+)\\s@\\s\\[(\\d{2}:\\d{2})[–-](\\d{2}:\\d{2})\\]:(.*)/);
+        if (m) {
+          out.push({ call_id: m[1], start: m[2], end: m[3], quote: m[4]?.trim().replace(/^["“”]|["“”]$/g, "") });
+        }
+      }
+      return out;
+    }
+
+    function renderSources(list) {
+      sourcesEl.innerHTML = "";
+      list.forEach(s => {
+        const card = document.createElement("div");
+        card.className = "p-3 border rounded-xl bg-gray-50";
+        card.innerHTML = `
+          <div class="text-sm font-semibold">${s.call_id}</div>
+          <div class="text-xs text-gray-600">[${s.start}–${s.end}]</div>
+          <div class="text-sm mt-1">${s.quote || ""}</div>
+        `;
+        sourcesEl.appendChild(card);
+      });
+    }
+
+    async function ask() {
+      // Disable all buttons and show overlay
+      document.querySelectorAll("button").forEach(b => b.disabled = true);
+      $("overlay").classList.remove("hidden");
+      
+      const payload = {
+        query: $("query").value,
+        include_topics: $("incTopics").value,
+        exclude_topics: $("excTopics").value,
+        min_sentiment: $("minSent").value,
+        max_sentiment: $("maxSent").value
+      };
+      answerWrap.classList.add("hidden");
+      answerEl.textContent = "Thinking...";
+      
+      try {
+        const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const j = await r.json();
+        if (!j.ok) {
+          answerEl.textContent = j.message || "Failed";
+          answerWrap.classList.remove("hidden");
+          return;
+        }
+        answerEl.textContent = j.answer;
+        renderSourceCards(j.contexts || []);
+        answerWrap.classList.remove("hidden");
+      } finally {
+        // Re-enable buttons and hide overlay regardless of error or success
+        document.querySelectorAll("button").forEach(b => b.disabled = false);
+        $("overlay").classList.add("hidden");
+      }
+    }
+
+    function toMMSS(sec) {
+      const m = Math.floor(sec/60).toString().padStart(2,'0');
+      const s = (sec%60).toString().padStart(2,'0');
+      return `${m}:${s}`;
+    }
+
+    function renderSourceCards(contexts) {
+      sourcesEl.innerHTML = "";
+      contexts.forEach(c => {
+        const card = document.createElement("div");
+        card.className = "p-3 border rounded-xl bg-gray-50";
+        const start = toMMSS(c.start_sec);
+        const end = toMMSS(c.end_sec);
+        card.innerHTML = `
+          <div class="text-sm font-semibold">${c.call_id}</div>
+          <div class="text-xs text-gray-600">[${start}–${end}]</div>
+          <div class="text-sm mt-1">${(c.text || "").slice(0,180)}${(c.text||"").length>180?"…":""}</div>
+          <div class="mt-2">
+            <a class="text-blue-600 hover:underline text-sm" href="/?call_id=${encodeURIComponent(c.call_id)}&start=${start}&end=${end}">Open in Viewer</a>
+          </div>
+        `;
+        sourcesEl.appendChild(card);
+      });
+    }
+
+    $("btnIngest").addEventListener("click", ingest);
+    $("btnListCalls").addEventListener("click", listCalls);
+    $("btnAsk").addEventListener("click", ask);
+
+    // Drag & Drop
+    const drop = $("drop");
+    const fileInput = $("fileInput");
+    const uploadStatus = $("uploadStatus");
+
+    function preventDefaults (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    ["dragenter","dragover","dragleave","drop"].forEach(ev => {
+      drop.addEventListener(ev, preventDefaults, false);
+    });
+    drop.addEventListener("dragover", () => drop.classList.add("bg-gray-100"));
+    drop.addEventListener("dragleave", () => drop.classList.remove("bg-gray-100"));
+    drop.addEventListener("drop", async (e) => {
+      drop.classList.remove("bg-gray-100");
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      await doUpload(files);
+    });
+    fileInput.addEventListener("change", async (e) => {
+      await doUpload(e.target.files);
+      fileInput.value = "";
+    });
+
+    async function doUpload(files) {
+      const fd = new FormData();
+      for (const f of files) fd.append("files", f);
+      uploadStatus.textContent = "Uploading...";
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const j = await r.json();
+      if (j.ok) {
+        uploadStatus.textContent = `Uploaded ${j.saved?.length||0} file(s), rebuilt ${j.segments} segments.`;
+        await listCalls();
+      } else {
+        uploadStatus.textContent = j.message || "Upload failed";
+      }
+    }
+
+    // Transcript Viewer
+    async function openViewer(call_id, start, end) {
+      $("viewerCallId").value = call_id || "";
+      $("viewerStart").value = start || "";
+      $("viewerEnd").value = end || "";
+      const r = await fetch(`/api/transcript/${encodeURIComponent(call_id)}`);
+      const j = await r.json();
+      const host = $("transcript");
+      host.innerHTML = "";
+      if (!j.ok) {
+        host.textContent = j.message || "No transcript";
+        return;
+      }
+      // render utterances
+      j.utterances.forEach(u => {
+        const row = document.createElement("div");
+        row.className = "mb-2";
+        row.id = `t-${u.start_sec}`;
+        row.innerHTML = `<span class="text-xs text-gray-600">[${u.start}]</span> <span class="font-medium">${u.speaker}</span>: ${u.text}`;
+        host.appendChild(row);
+      });
+      // scroll to start
+      const match = j.utterances.find(u => u.start === start);
+      const target = document.getElementById(`t-${match ? match.start_sec : j.utterances[0].start_sec}`);
+      if (target) { target.scrollIntoView({behavior:"smooth", block:"center"}); target.classList.add("bg-yellow-100"); }
+    }
+
+    $("btnOpenViewer").addEventListener("click", () => {
+      openViewer($("viewerCallId").value, $("viewerStart").value, $("viewerEnd").value);
+    });
+
+    // Handle deep link params
+    function getParams() {
+      const url = new URL(window.location);
+      return Object.fromEntries(url.searchParams.entries());
+    }
+    const qp = getParams();
+    if (qp.call_id && qp.start) {
+      openViewer(qp.call_id, qp.start, qp.end);
+    }
+
+    // Try listing calls on load
+    listCalls();
+  </script>
+</body>
+</html>

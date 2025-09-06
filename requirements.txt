@@ -1,0 +1,13 @@
+numpy
+tqdm
+rank-bm25
+typer[all]
+rich
+python-dotenv
+openai>=1.30.0
+vaderSentiment
+sentence-transformers
+faiss-cpu
+python-multipart
+fastapi
+uvicorn
