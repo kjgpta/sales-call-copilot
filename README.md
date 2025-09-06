@@ -115,3 +115,6 @@ In the UI:
 - Drag & drop `.txt` files in the UI or click **Choose files** (hit **Ingest Sample Data** if you want the provided examples).
 - Click **Open in Viewer** on any source card to jump to the exact timestamp range in the transcript viewer.
 - You can also deep link directly: `/?call_id=2_pricing_call&start=01:24&end=01:47`.
+
+### Code
+The code is available on [GitHub](https://github.com/kjgpta/sales-call-copilot).
